@@ -2,3 +2,7 @@ fastapi
 uvicorn
 qdrant-client
 sentence-transformers
+langgraph
+pydantic
+python-dotenv
+pydantic_settings
