@@ -1,148 +1,147 @@
 import uuid
 import itertools
-from typing import Dict,Iterable
+from typing import Dict, Iterable, List
 from sentence_transformers import SentenceTransformer
-from qdrant_client.models import PointStruct, VectorParams, Distance
-
+from qdrant_client.models import PointStruct, VectorParams, Distance, PayloadSchemaType
 # Project Imports
 from app.config import settings
-from app.vectorstore.qdrant_client import  client as qdrant_client
-from app.schema_ingestion.schema_extractor import SchemaExtractor  # <--- Using your class
-from app.utils.logging_util import logger  # <--- Using the centralized logger
+from app.vectorstore.qdrant_client import client as qdrant_client
+from app.schema_ingestion.schema_extractor import SchemaExtractor 
+from app.utils.logging_util import logger 
 
 class SchemaIngestionService:
     def __init__(self, db_url: str = None):
-        # Pass the db_url down to the Extractor
         self.extractor = SchemaExtractor(db_url=db_url)
         
-        # Load the ML Model
         logger.info("⚙️ Loading Embedding Model: %s", settings.EMBEDDING_MODEL)
         try:
             self.model = SentenceTransformer(settings.EMBEDDING_MODEL)
         except Exception as e:
             logger.critical("Failed to load embedding model: %s", e, exc_info=True)
             raise e
-        self.batch_size = 50  # Process 50 tables at a time
-        # Ensure Qdrant Collection Exists
-        self._ensure_collection(settings.COLLECTION_NAME)
+            
+        self.batch_size = 25 # Reduced batch size because we are generating more points per table
         self._ensure_collection(settings.DB_COLLECTION_NAME)
-        
+
+
     def _ensure_collection(self, collection_name: str):
-        """Ensure the given Qdrant collection exists; create if missing."""
+        """Ensures collection exists and ALL required payload indexes are present."""
         try:
             collections = qdrant_client.get_collections()
             existing_names = {c.name for c in collections.collections}
 
+            # 1. Create collection if missing
             if collection_name not in existing_names:
-                logger.warning(
-                    "Collection '%s' not found. Creating...", collection_name
-                )
-
                 qdrant_client.create_collection(
                     collection_name=collection_name,
-                    vectors_config=VectorParams(
-                        size=settings.VECTOR_SIZE,
-                        distance=Distance.COSINE,
-                    ),
+                    vectors_config=VectorParams(size=settings.VECTOR_SIZE, distance=Distance.COSINE),
                 )
 
-                logger.info(
-                    "✅ Collection '%s' created successfully.", collection_name
-                )
-            else:
-                logger.debug(
-                    "Collection '%s' already exists.", collection_name
-                )
+            # 2. Create index for 'type' (table vs column)
+            qdrant_client.create_payload_index(
+                collection_name=collection_name,
+                field_name="type",
+                field_schema=PayloadSchemaType.KEYWORD,
+            )
+
+            # 3. Create index for 'table_name' (used in parent expansion)
+            qdrant_client.create_payload_index(
+                collection_name=collection_name,
+                field_name="table_name",
+                field_schema=PayloadSchemaType.KEYWORD,
+            )
+            
+            logger.info(f"✅ Indexes for 'type' and 'table_name' are ready on {collection_name}")
 
         except Exception as e:
-            logger.error(
-                "Failed to ensure collection '%s': %s",
-                collection_name,
-                e,
-                exc_info=True,
-            )
+            logger.error(f"Failed to ensure collection or indexes: {e}")
             raise
-
-
-    def _generate_semantic_text(self, table: Dict) -> str:
-        """
-        Creates a 'Natural Language' representation optimized for embeddings.
-        Focuses on meaningful keywords, ignoring generic types like 'varchar'.
-        """
+        
+    def _generate_table_text(self, table: Dict) -> str:
+        """NL Summary for the Table-level node."""
         t_name = table['table_name']
         desc = table.get('description', '')
-        
-        # 1. Clean Column List (Just names usually work better than types for semantic search)
-        col_names = ", ".join([c['name'].replace("_", " ") for c in table['columns']])
-        
-        # 2. Clean Relationships
-        relationships = ", ".join(
-            [f"related to {fk['foreign_table']}" for fk in table['foreign_keys']]
-        )
-        
-        # 3. Construct Semantic Block
-        # "Table 'users' stores customer data. It contains columns: name, email, id. It is related to orders."
-        text = f"Table '{t_name}'"
-        if desc:
-            text += f". Description: {desc}"
-        
-        text += f". Contains columns: {col_names}."
-        
-        if relationships:
-            text += f" {relationships}."
-            
+        cols = ", ".join([c['name'] for c in table['columns']])
+        text = f"Table '{t_name}'. "
+        if desc: text += f"Description: {desc}. "
+        text += f"Columns: {cols}"
         return text
 
+    def _generate_column_text(self, table_name: str, column: Dict) -> str:
+        """Contextualized text for the Column-level node."""
+        # Crucial: Prepend table name so 'status' in 'orders' 
+        # is different from 'status' in 'users'
+        return f"Table: {table_name}, Column: {column['name']} (Type: {column['type']})"
+
     def _batch_iterator(self, iterable: Iterable, size: int):
-        """Helper to yield chunks from a generator."""
         it = iter(iterable)
         while True:
             chunk = list(itertools.islice(it, size))
-            if not chunk:
-                break
+            if not chunk: break
             yield chunk
 
     def run_ingestion(self):
-        logger.info("🚀 Starting Scalable Schema Ingestion...")
+        logger.info("🚀 Starting Contextualized Hierarchical Ingestion...")
         
-        # 1. Get the Generator
         table_generator = self.extractor.extract_schema_generator()
-        
-        total_ingested = 0
+        total_tables = 0
+        total_points = 0
 
-        # 2. Process in Batches
         for batch in self._batch_iterator(table_generator, self.batch_size):
             points = []
             
-            # Vectorize the batch
             for table in batch:
-                semantic_text = self._generate_semantic_text(table)
-                vector = self.model.encode(semantic_text).tolist()
+                t_name = table['table_name']
                 
-                # Deterministic ID based on table name
-                point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, table['table_name']))
+                # 1. Create TABLE Node
+                table_summary = self._generate_table_text(table)
+                table_vector = self.model.encode(table_summary).tolist()
+                table_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"tbl_{t_name}"))
                 
                 points.append(PointStruct(
-                    id=point_id,
-                    vector=vector,
+                    id=table_id,
+                    vector=table_vector,
                     payload={
-                        "table_name": table['table_name'],
-                        "schema_text": semantic_text, # Store the short semantic text
-                        "full_schema": table,         # Store the FULL raw schema for the LLM to read later
-                        "column_names": [c['name'] for c in table['columns']] # Good for Keyword Filtering
+                        "type": "table",
+                        "table_name": t_name,
+                        "schema_text": table_summary,
+                        "full_schema": table # Keep the JSON for the LLM
                     }
                 ))
 
-            # Upsert the batch
+                # 2. Create COLUMN Nodes for this table
+                # We embed columns individually for high-precision retrieval
+                for col in table['columns']:
+                    col_text = self._generate_column_text(t_name, col)
+                    col_vector = self.model.encode(col_text).tolist()
+                    
+                    # Deterministic ID for columns
+                    col_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"col_{t_name}_{col['name']}"))
+                    
+                    points.append(PointStruct(
+                        id=col_id,
+                        vector=col_vector,
+                        payload={
+                            "type": "column",
+                            "table_name": t_name,
+                            "column_name": col['name'],
+                            "context_text": col_text,
+                            "parent_table_id": table_id # Link for hierarchical expansion
+                        }
+                    ))
+                
+                total_tables += 1
+
+            # 3. Batch Upsert to Qdrant
             if points:
                 try:
                     qdrant_client.upsert(
                         collection_name=settings.DB_COLLECTION_NAME,
                         points=points
                     )
-                    total_ingested += len(points)
-                    logger.info(f"✅ Indexed batch of {len(points)} tables. Total: {total_ingested}")
+                    total_points += len(points)
+                    logger.info(f"✅ Ingested {len(batch)} tables ({len(points)} total nodes).")
                 except Exception as e:
-                    logger.error(f"❌ Failed to upsert batch: {e}")
+                    logger.error(f"❌ Batch upsert failed: {e}")
 
-        logger.info("🎉 Ingestion complete.")
+        logger.info(f"🎉 Ingestion Finished. Tables: {total_tables}, Total Nodes: {total_points}")
