@@ -1,7 +1,7 @@
 import logging
 import json
 from fastapi import APIRouter, HTTPException
-from app.schemas.request_response import IntentRequest, IntentResponse,IntentMatch
+from app.models.request_response import IntentRequest, IntentResponse,IntentMatch
 from app.intent_search.semantic_search import get_top_intents
 
 # Use the name defined in LogConfig.LOGGER_NAME
