@@ -9,7 +9,7 @@ ingestion pipeline. It acts as the boundary between external clients
 import logging
 from fastapi import APIRouter, HTTPException
 
-from app.schemas.ingestion import (
+from app.models.ingestion import (
     IntentIngestionRequest,
     IntentIngestionResponse
 )

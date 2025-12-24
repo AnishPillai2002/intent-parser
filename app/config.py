@@ -1,16 +1,35 @@
-# Settings (env, model, qdrant)
 import os
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
 load_dotenv()
 
-QDRANT_URL = os.getenv("QDRANT_URL")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+class Settings:
+    # =========================================================================
+    # 1. DATABASE SETTINGS (Postgres / Supabase)
+    # =========================================================================
+    # The connection string: postgresql://user:password@host:port/dbname
+    DB_URL = os.getenv("DB_URL")
+    
+    # Optional: Default schema to look for tables (usually 'public')
+    DB_SCHEMA = os.getenv("DB_SCHEMA", "public")
 
-EMBEDDING_MODEL = os.getenv(
-    "EMBEDDING_MODEL",
-    "all-MiniLM-L6-v2"
-)
+    # =========================================================================
+    # 2. QDRANT SETTINGS (Vector Database)
+    # =========================================================================
+    # If using Qdrant Cloud, use URL + API KEY. 
+    # If using local Docker, URL might be 'http://localhost:6333' and Key is None.
+    QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+    QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", None)
+    
+    COLLECTION_NAME = os.getenv("COLLECTION_NAME", "sql_intents")
+    DB_COLLECTION_NAME = os.getenv("DB_COLLECTION_NAME", "db_schemas")
+    VECTOR_SIZE = int(os.getenv("VECTOR_SIZE", 384))
 
-COLLECTION_NAME = os.getenv("COLLECTION_NAME", "sql_intents")
-VECTOR_SIZE = int(os.getenv("VECTOR_SIZE", 384))
+    # =========================================================================
+    # 3. MODEL SETTINGS
+    # =========================================================================
+    EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+
+# Instantiate simple singleton for easy import
+settings = Settings()

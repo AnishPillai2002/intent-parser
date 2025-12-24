@@ -1,5 +1,5 @@
 # Embedding model loader
 from sentence_transformers import SentenceTransformer
-from app.config import EMBEDDING_MODEL
+from app.config import settings
 
-model = SentenceTransformer(EMBEDDING_MODEL)
+model = SentenceTransformer(settings.EMBEDDING_MODEL)

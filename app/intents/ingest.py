@@ -17,7 +17,7 @@ import logging
 from qdrant_client.models import PointStruct
 
 from app.intents.sql_intents import SQL_INTENTS
-from app.config import COLLECTION_NAME
+from app.config import settings
 from app.embeddings.embedder import batch_embed
 from app.vectorstore.qdrant_client import client, ensure_collection
 from app.utils.idempotent_id import make_id
@@ -191,7 +191,7 @@ def ingest_intents():
 
         # Upsert all points for this intent in one call
         client.upsert(
-            collection_name=COLLECTION_NAME,
+            collection_name=settings.COLLECTION_NAME,
             points=points
         )
 

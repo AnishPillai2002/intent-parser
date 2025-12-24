@@ -6,3 +6,6 @@ langgraph
 pydantic
 python-dotenv
 pydantic_settings
+pytest
+psycopg2-binary 
+chromadb 

@@ -1,7 +1,7 @@
 import logging
 from typing import List, Dict, Any
 from app.vectorstore.qdrant_client import client
-from app.config import COLLECTION_NAME
+from app.config import settings
 from app.embeddings.embedder import embed_text
 
 # Configure local logging
@@ -20,7 +20,7 @@ def get_top_intents(query: str, limit: int = 5) -> List[Dict[str, Any]]:
 
         # 2. Query Qdrant using the modern query_points API
         response = client.query_points(
-            collection_name=COLLECTION_NAME,
+            collection_name=settings.COLLECTION_NAME,
             query=query_vector,
             limit=limit,
             with_payload=True,
