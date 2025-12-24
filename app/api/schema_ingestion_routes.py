@@ -3,15 +3,15 @@ from pydantic import BaseModel
 from app.schema_ingestion.schema_loader import SchemaIngestionService
 
 router = APIRouter(
-    prefix="/api/ingest",
-    tags=["SchemaIngestion"]
+    prefix="/api/schema",
+    tags=["Schema Ingestion"]
 )
 
 class IngestRequest(BaseModel):
     db_connection_string: str 
 
 @router.post(
-        "/schema",
+        "/ingest",
         response_model=dict
 )
 async def ingest_schema(request: IngestRequest):
