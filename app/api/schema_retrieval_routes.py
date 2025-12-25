@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from typing import Dict, Any
 from app.schema_ingestion.schema_retrieval import SchemaRetrievalService
 
 router = APIRouter(
@@ -15,7 +16,7 @@ class QueryRequest(BaseModel):
     top_k: int = 15
 
 class QueryResponse(BaseModel):
-    context: str
+    context: Dict[str, Any]
 
 @router.post("/retrieval", response_model=QueryResponse)
 async def get_schema_context(request: QueryRequest):

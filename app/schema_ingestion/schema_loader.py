@@ -3,6 +3,7 @@ import itertools
 from typing import Dict, Iterable, List
 from sentence_transformers import SentenceTransformer
 from qdrant_client.models import PointStruct, VectorParams, Distance, PayloadSchemaType
+
 # Project Imports
 from app.config import settings
 from app.vectorstore.qdrant_client import client as qdrant_client
@@ -20,9 +21,8 @@ class SchemaIngestionService:
             logger.critical("Failed to load embedding model: %s", e, exc_info=True)
             raise e
             
-        self.batch_size = 25 # Reduced batch size because we are generating more points per table
+        self.batch_size = 25 
         self._ensure_collection(settings.DB_COLLECTION_NAME)
-
 
     def _ensure_collection(self, collection_name: str):
         """Ensures collection exists and ALL required payload indexes are present."""
@@ -30,48 +30,51 @@ class SchemaIngestionService:
             collections = qdrant_client.get_collections()
             existing_names = {c.name for c in collections.collections}
 
-            # 1. Create collection if missing
             if collection_name not in existing_names:
                 qdrant_client.create_collection(
                     collection_name=collection_name,
                     vectors_config=VectorParams(size=settings.VECTOR_SIZE, distance=Distance.COSINE),
                 )
 
-            # 2. Create index for 'type' (table vs column)
-            qdrant_client.create_payload_index(
-                collection_name=collection_name,
-                field_name="type",
-                field_schema=PayloadSchemaType.KEYWORD,
-            )
-
-            # 3. Create index for 'table_name' (used in parent expansion)
-            qdrant_client.create_payload_index(
-                collection_name=collection_name,
-                field_name="table_name",
-                field_schema=PayloadSchemaType.KEYWORD,
-            )
+            # Create keyword indexes for efficient filtering during retrieval
+            for field in ["type", "table_name"]:
+                qdrant_client.create_payload_index(
+                    collection_name=collection_name,
+                    field_name=field,
+                    field_schema=PayloadSchemaType.KEYWORD,
+                )
             
-            logger.info(f"✅ Indexes for 'type' and 'table_name' are ready on {collection_name}")
-
+            logger.info(f"✅ Collection and indexes ready on {collection_name}")
         except Exception as e:
             logger.error(f"Failed to ensure collection or indexes: {e}")
             raise
-        
+
     def _generate_table_text(self, table: Dict) -> str:
-        """NL Summary for the Table-level node."""
+        """Creates a semantic summary for the Table-level node."""
         t_name = table['table_name']
         desc = table.get('description', '')
         cols = ", ".join([c['name'] for c in table['columns']])
-        text = f"Table '{t_name}'. "
-        if desc: text += f"Description: {desc}. "
-        text += f"Columns: {cols}"
+        
+        text = f"Table: {t_name}. "
+        if desc: 
+            text += f"Summary: {desc}. "
+        text += f"Contains columns: {cols}"
         return text
 
     def _generate_column_text(self, table_name: str, column: Dict) -> str:
-        """Contextualized text for the Column-level node."""
-        # Crucial: Prepend table name so 'status' in 'orders' 
-        # is different from 'status' in 'users'
-        return f"Table: {table_name}, Column: {column['name']} (Type: {column['type']})"
+        """
+        Contextualized text for the Column-level node.
+        Includes sample values to enable 'Value-Aware' retrieval.
+        """
+        # Prefix with table name to maintain unique context for similar column names
+        text = f"Table: {table_name}, Column: {column['name']} (Type: {column['type']})"
+        
+        # IMPROVEMENT: Add categorical samples to the embedding text
+        if column.get('samples'):
+            samples_str = ", ".join(column['samples'])
+            text += f". Example values: {samples_str}"
+            
+        return text
 
     def _batch_iterator(self, iterable: Iterable, size: int):
         it = iter(iterable)
@@ -81,8 +84,10 @@ class SchemaIngestionService:
             yield chunk
 
     def run_ingestion(self):
-        logger.info("🚀 Starting Contextualized Hierarchical Ingestion...")
+        """Main entry point: Extract -> Contextualize -> Embed -> Upsert"""
+        logger.info("🚀 Starting Advanced Hierarchical Ingestion...")
         
+        # Uses the updated generator with pg_stats and TABLESAMPLE logic
         table_generator = self.extractor.extract_schema_generator()
         total_tables = 0
         total_points = 0
@@ -105,17 +110,14 @@ class SchemaIngestionService:
                         "type": "table",
                         "table_name": t_name,
                         "schema_text": table_summary,
-                        "full_schema": table # Keep the JSON for the LLM
+                        "full_schema": table # Store JSON for LLM reference
                     }
                 ))
 
-                # 2. Create COLUMN Nodes for this table
-                # We embed columns individually for high-precision retrieval
+                # 2. Create COLUMN Nodes
                 for col in table['columns']:
                     col_text = self._generate_column_text(t_name, col)
                     col_vector = self.model.encode(col_text).tolist()
-                    
-                    # Deterministic ID for columns
                     col_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"col_{t_name}_{col['name']}"))
                     
                     points.append(PointStruct(
@@ -126,13 +128,14 @@ class SchemaIngestionService:
                             "table_name": t_name,
                             "column_name": col['name'],
                             "context_text": col_text,
-                            "parent_table_id": table_id # Link for hierarchical expansion
+                            "parent_table_id": table_id,
+                            "samples": col.get('samples', []) # Store samples for filtering
                         }
                     ))
                 
                 total_tables += 1
 
-            # 3. Batch Upsert to Qdrant
+            # 3. Batch Upsert
             if points:
                 try:
                     qdrant_client.upsert(

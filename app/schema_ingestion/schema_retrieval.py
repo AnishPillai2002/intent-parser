@@ -1,4 +1,4 @@
-from typing import List, Dict, Set
+from typing import List, Dict, Any
 from app.vectorstore.qdrant_client import client as qdrant_client
 from app.config import settings
 from app.utils.logging_util import logger
@@ -28,7 +28,7 @@ class SchemaRetrievalService:
         points = result[0]
         return points[0].payload["full_schema"] if points else None
 
-    def retrieve_relevant_schema(self, user_query: str, top_k: int = 15) -> str:
+    def retrieve_relevant_schema(self, user_query: str, top_k: int = 15) -> Dict[str, Any]:
         """
         The core Hierarchical Retrieval logic.
         """
@@ -69,26 +69,49 @@ class SchemaRetrievalService:
         # 4. Format for LLM Prompt
         return self._format_output_for_llm(relevant_tables, matched_columns)
 
-    def _format_output_for_llm(self, tables: Dict[str, Dict], matched_cols: List[str]) -> str:
-        """Constructs a clean string representation for the SQL Agent."""
+    def _format_output_for_llm(
+        self,
+        tables: Dict[str, Dict],
+        matched_cols: List[str]
+    ) -> Dict[str, Any]:
+        """Constructs a clean JSON representation for the SQL Agent."""
+
         if not tables:
-            return "No relevant tables found."
+            return {
+                "status": "empty",
+                "message": "No relevant tables found.",
+                "matched_columns": matched_cols,
+                "tables": []
+            }
 
-        output = "### RELEVANT SCHEMA CONTEXT ###\n"
-        output += f"High-priority column matches: {', '.join(matched_cols)}\n\n"
+        result = {
+            "status": "ok",
+            "matched_columns": matched_cols,
+            "tables": []
+        }
 
-        for t_name, schema in tables.items():
-            output += f"Table: {t_name}\n"
-            if schema.get('description'):
-                output += f"Description: {schema['description']}\n"
-            
-            col_lines = [f"  - {c['name']} ({c['type']})" for c in schema['columns']]
-            output += "Columns:\n" + "\n".join(col_lines) + "\n"
-            
-            if schema.get('foreign_keys'):
-                output += "Relationships:\n"
-                for fk in schema['foreign_keys']:
-                    output += f"  - {fk['col']} -> {fk['foreign_table']}\n"
-            output += "---\n"
-        
-        return output
+        for table_name, schema in tables.items():
+            table_obj = {
+                "table_name": table_name,
+                "description": schema.get("description"),
+                "columns": [],
+                "relationships": []
+            }
+
+            # Columns
+            for col in schema.get("columns", []):
+                table_obj["columns"].append({
+                    "name": col.get("name"),
+                    "type": col.get("type")
+                })
+
+            # Foreign keys / relationships
+            for fk in schema.get("foreign_keys", []):
+                table_obj["relationships"].append({
+                    "column": fk.get("col"),
+                    "references_table": fk.get("foreign_table")
+                })
+
+            result["tables"].append(table_obj)
+
+        return result
