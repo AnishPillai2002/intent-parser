@@ -31,5 +31,9 @@ class Settings:
     # =========================================================================
     EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
+    CUSTOM_LLM_URL = os.getenv("CUSTOM_LLM_URL", "")
+    CUSTOM_LLM_KEY = os.getenv("CUSTOM_LLM_KEY", "")
 # Instantiate simple singleton for easy import
 settings = Settings()

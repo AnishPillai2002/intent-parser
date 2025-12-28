@@ -115,3 +115,6 @@ class SchemaRetrievalService:
             result["tables"].append(table_obj)
 
         return result
+
+#Singleton instance for global use
+schema_retrieval_service = SchemaRetrievalService()

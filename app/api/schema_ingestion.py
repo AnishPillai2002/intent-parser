@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from app.schema_ingestion.schema_loader import SchemaIngestionService
+
+# Import the service singleton
+from app.services.db_schema.schema_loader import schema_ingestion_service
 
 router = APIRouter(
     prefix="/api/schema",
@@ -10,13 +12,16 @@ router = APIRouter(
 class IngestRequest(BaseModel):
     db_connection_string: str 
 
+# -------------------------------------------------------------------
+# POST /api/ingest-schema
+# -------------------------------------------------------------------
 @router.post(
-        "/ingest",
+        "/ingest-schema",
         response_model=dict
 )
 async def ingest_schema(request: IngestRequest):
     """
-    Connects to the provided DB URL, extracts schema, and stores it in Qdrant.
+    Connects to the provided DB URL, extracts schema, and stores it as vector embeddings.
     """
     if not request.db_connection_string:
         raise HTTPException(status_code=400, detail="Database connection string required")
@@ -26,10 +31,8 @@ async def ingest_schema(request: IngestRequest):
     try:
         # 1. Instantiate the service with the provided connection string
         # NOTE: We need to update SchemaIngestionService to accept this argument
-        service = SchemaIngestionService(db_url=request.db_connection_string)
-
         # 2. CALL the function (add parentheses!)
-        count = service.run_ingestion()
+        count = schema_ingestion_service.run_ingestion(db_url=request.db_connection_string)
         
         return {
             "status": "success", 

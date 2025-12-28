@@ -16,9 +16,9 @@ with deterministic IDs to ensure idempotent ingestion.
 import logging
 from qdrant_client.models import PointStruct
 
-from app.intents.sql_intents import SQL_INTENTS
+from app.definitions import SQL_INTENTS
 from app.config import settings
-from app.embeddings.embedder import batch_embed
+from app.services.embedding.embedding import embedding_service
 from app.vectorstore.qdrant_client import client, ensure_collection
 from app.utils.idempotent_id import make_id
 
@@ -109,7 +109,7 @@ def ingest_intents():
     all_texts = list(set(all_texts))
 
     logger.info("Generating embeddings...")
-    vectors = batch_embed(all_texts)
+    vectors = embedding_service.batch_embed(all_texts)
 
     # Create a direct text → vector lookup map.
     # This eliminates fragile index-based alignment logic.
